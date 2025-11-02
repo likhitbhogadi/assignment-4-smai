@@ -1,2 +1,6 @@
 data
 documentation.md
+smaia4env
+.env
+wandb
+.ipynb_checkpoints
