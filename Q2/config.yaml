@@ -5,6 +5,7 @@
 # --- W&B Project ---
 project_name: "smai_a4_q2_colorization"
 entity: "likhitbhogadi-iiit-hyderabad" # Use the correct team name  # <-- Set this to your W&B username or team
+run_name: "colorize-experiment-01"
 
 # --- Model Hyperparameters ---
 learning_rate: 0.001

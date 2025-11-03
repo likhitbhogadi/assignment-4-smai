@@ -5,6 +5,8 @@ from tqdm import tqdm
 import wandb
 import numpy as np
 import yaml
+import random
+import os
 
 from model import ColorizationNet
 from dataset import get_dataloaders
@@ -23,22 +25,21 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     pbar = tqdm(loader, desc="Training")
     for gray_img, target_map in pbar:
         gray_img, target_map = gray_img.to(device), target_map.to(device)
-        
+
         # Forward pass
         optimizer.zero_grad()
         outputs = model(gray_img) # [B, 24, 32, 32]
-        
+
         # Loss calculation [cite: 220]
         loss = criterion(outputs, target_map)
-        
+
         # Backward pass
         loss.backward()
         optimizer.step()
-        
+
         total_loss += loss.item()
         pbar.set_postfix(train_loss=loss.item())
-        wandb.log({"batch_train_loss": loss.item()})
-        
+
     return total_loss / len(loader)
 
 def evaluate(model, loader, criterion, device, centroids_tensor, epoch_num):
@@ -91,9 +92,19 @@ def run_training():
     # Initialize W&B
     # W&B will use 'base_config' as defaults.
     # If run by a sweep, it will override these defaults.
+    # Optionally allow the YAML config to specify a run_name. If provided,
+    # use it as the W&B run name. Otherwise generate a timestamped default.
+    run_name = base_config.pop('run_name', None)
+
+    if run_name is None:
+        from datetime import datetime
+        safe_proj = base_config.get('project_name', 'wandb-project')
+        run_name = f"{safe_proj}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
     run = wandb.init(
         project=base_config.pop('project_name'), # Use and remove from config
         entity=base_config.pop('entity'),       # Use and remove from config
+        name=run_name,                          # Human-friendly run name
         config=base_config                      # Pass the rest as config defaults
     )
     
@@ -104,10 +115,42 @@ def run_training():
     
     # --- Setup ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
     print(f"Using device: {device}")
+    # -------------------------
+    # Deterministic / reproducible setup
+    # -------------------------
+    # Read seed from config (if provided) or default to 42
+    seed = int(config.get('seed', 42))
+
+    # Set PYTHONHASHSEED for deterministic hashing
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    # cuDNN settings for determinism
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Enforce deterministic algorithms where possible (newer PyTorch)
+    # Use warn_only=True because some ops (like CrossEntropyLoss on CUDA) don't have deterministic implementations
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        # Older PyTorch versions don't support warn_only parameter
+        try:
+            torch.use_deterministic_algorithms(True)
+        except Exception:
+            # Even older versions don't have this API at all
+            pass
     
-    # Load data
-    train_loader, val_loader = get_dataloaders(batch_size=config.batch_size)
+    # Load data (pass seed and optionally num_workers for reproducibility)
+    num_workers = int(config.get('num_workers', 1))
+    train_loader, val_loader = get_dataloaders(batch_size=config.batch_size, seed=seed, num_workers=num_workers)
     
     # Load centroids
     centroids = np.load("color_centroids.npy")
@@ -130,8 +173,13 @@ def run_training():
     # Initialize Loss
     criterion = nn.CrossEntropyLoss()
     
-    # Log model graph
-    wandb.watch(model, criterion, log="all", log_freq=100)
+    # Log model graph and gradients. Set log_freq to the length of the training
+    # loader so we record gradients/parameters once per epoch instead of every N steps.
+    try:
+        log_freq = max(1, len(train_loader))
+    except Exception:
+        log_freq = 100
+    wandb.watch(model, criterion, log="all", log_freq=log_freq)
     
     # --- Training Loop ---
     best_val_loss = float('inf')
