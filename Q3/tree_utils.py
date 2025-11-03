@@ -108,16 +108,22 @@ class InternalDecisionNode(object):
         '''
         T, F = x_TF.shape
 
-        # TODO determine which of the input T examples belong to the 
-        # left child and which belong to the right
-        # Hint: use this node's "feat_id" and "thresh_val" attributes
-
-        # TODO ask the left child for its predictions (call 'predict')
-        # TODO ask the right child for its predictions (call 'predict')
+        # Determine which examples go to left child (feature value < threshold)
+        # and which go to right child (feature value >= threshold)
+        left_mask_T = x_TF[:, self.feat_id] < self.thresh_val
+        right_mask_T = np.logical_not(left_mask_T)
         
-        # TODO aggregate all predictions and return one array
-        # Hint: Make sure to preserve the order of examples as in the input.
-        yhat_T = 1.2345 * np.ones(T, dtype=np.float64) # TODO fixme
+        # Initialize output array
+        yhat_T = np.zeros(T, dtype=np.float64)
+        
+        # Get predictions from left child for examples that go left
+        if np.sum(left_mask_T) > 0:
+            yhat_T[left_mask_T] = self.left_child.predict(x_TF[left_mask_T])
+        
+        # Get predictions from right child for examples that go right
+        if np.sum(right_mask_T) > 0:
+            yhat_T[right_mask_T] = self.right_child.predict(x_TF[right_mask_T])
+        
         return yhat_T
 
 
@@ -178,10 +184,9 @@ class LeafNode(object):
             Predicted y value for each provided example
         '''
         T = x_TF.shape[0]
-        # TODO return one array with prediction determined by training set
-        # Hint: Use this node's attribute "y_N", accessed by "self.y_N"
-        # This is an array of all y values that reach this leaf in train set.
-        yhat_T = -1.2345 * np.ones(T) # TODO fixme
+        # Return prediction as the mean of training labels at this leaf
+        # All T examples get the same predicted value
+        yhat_T = np.mean(self.y_N) * np.ones(T)
         return yhat_T
 
 
