@@ -1,7 +1,0 @@
-# requirements.txt
-torch
-torchvision
-numpy
-wandb
-tqdm
-PyYAML
